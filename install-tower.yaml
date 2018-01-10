@@ -1,0 +1,267 @@
+---
+- name: Create hosts for Ansible Tower
+  hosts: localhost
+  connection: connection
+  gather_facts: False
+  vars_files:
+     - settings/authentications
+     - settings/defaults
+  tasks:
+### VARIABLES SETUP
+     - name: Setting Variables
+       include: ./commons.yaml
+       tags:
+          - always
+
+     - name: Defining Tower Host{{ ':' }} {{ prefix_id }}-host
+       set_fact: tower_host="{{ prefix_id }}-host"
+       tags:
+          - always
+
+### GENERATING VIRTUAL MACHINES SERVICES ----- IF YOU WANT TO CHANGE FORM GCLOUD TO ANTOHER PROVIDER, 
+### SUPPLY YOUR OWN PROVIDER TASK FILES TO CREATE INSTANCES
+### THE FILES THAT SHOULD BE REPLACED ARE: 
+###          (create-server.yaml)
+
+### CREATE TOWER NODES
+     - name: Creating Tower Host
+       include: ./create-server.yaml
+       tags:
+          - create_servers
+          - generating_inventory
+
+### CREATE DNS CONFIGS
+     - name: Creating DNS configurations
+       include: ./create-dns.yaml
+       tags:
+          - create_dns
+
+### CREATE INVENTORY FILE
+     - name: Deleting old hosts file
+       file:
+          path: "./tmp/hosts"
+          state: absent
+       ignore_errors: True
+       tags: 
+          - generating_inventory
+
+     - name: Copying OpenHAB inventory file template
+       template:
+          src: "./templates/inventory_hosts.j2"
+          dest: "./tmp/hosts"
+       tags:
+          - generating_inventory
+
+### DELETING OLD KEYS
+- name: Setting up keys
+  hosts: all
+  vars_files:
+     - settings/authentications
+     - settings/defaults
+  gather_facts: False
+  tasks:
+      - name: Searching for keys
+        find:
+           paths: /root/.ssh/
+        register: keys_to_delete
+        tags: 
+           - ssh
+
+      - name: Deleting old keys
+        file:
+           path: "{{ item.path }}"
+           state: absent
+        with_items: "{{ keys_to_delete.files }}"
+        tags: 
+           - ssh
+
+      - name: Generate keys for All Servers
+        command: "ssh-keygen -b 4096 -t rsa -f /root/.ssh/id_rsa -q -N \"\""
+        tags:
+           - ssh
+
+      - name: "Add my key to authorized_keys"
+        authorized_key:
+          user: root
+          state: present
+          key: "{{ lookup('file', '{{ ssh_key_file }}') }}"
+        tags:
+          - ssh
+
+## Hosts update
+- name: Updating servers
+  hosts: all
+  vars_files:
+     - settings/authentications
+     - settings/defaults
+  vars:
+     repositories:
+         - rhel-7-server-rpms
+         - rhel-7-server-extras-rpms
+     prereqs_packages:
+         - vim
+         - wget
+         - git
+         - net-tools
+         - bind-utils
+         - bridge-utils
+         - bash-completion
+         - yum-utils
+         - createrepo
+         - httpd
+         - unzip
+         - ansible
+  gather_facts: False
+  tasks:
+    - name: RED HAT SUBSCRIPTION{{ ':' }} Installing Red Hat's Subscription Manager
+      yum: name=subscription-manager state=latest
+      ignore_errors: True
+      tags:
+         - prepare
+
+    - name: RED HAT SUBSCRIPTION{{ ':' }} Registering to Red Hat's Subscription Manager
+      command: subscription-manager register --username={{ redhat_subscription_username }}  --password={{ redhat_subscription_password }} --force
+      tags:
+         - prepare
+
+    - name: RED HAT SUBSCRIPTION{{ ':' }} Attaching a Pool ID
+      command: subscription-manager attach --pool={{ redhat_subscription_pool_id }}
+      tags:
+         - prepare
+
+    - name: RED HAT SUBSCRIPTION{{ ':' }} Disable all Repositories
+      command: subscription-manager repos --disable="*"
+      tags:
+         - prepare
+
+    - name: RED HAT SUBSCRIPTION{{ ':' }} Enabling Repository
+      command: subscription-manager repos --enable={{ item }}
+      with_items: "{{ repositories }}"
+      tags:
+         - prepare
+
+    - name: Updating the entire host
+      yum: name="*" state=latest
+      tags:
+         - prepare
+
+    - name: Installing all the necessary applications
+      yum: name="{{ item }}" state=latest
+      with_items: "{{ prereqs_packages }}"
+      tags:
+         - prepare
+
+    #CHANGING FIREWALL SERVICE"
+
+- name: Changing firewalld to iptables
+  hosts: all
+  gather_facts: False
+  tasks:
+      - name: Installing iptables-services
+        yum:
+          name: iptables-services
+          state: latest
+        tags:
+           - iptables
+
+      - name: Disabling firewalld services
+        systemd:
+          masked: yes
+          name: firewalld
+          state: stopped
+        tags:
+           - iptables
+
+      - name: Running iptables service
+        systemd:
+          name: iptables
+          enabled: yes
+          state: started
+        tags:
+           - iptables
+
+      - name: Running ip6tables service
+        systemd:
+          name: ip6tables
+          enabled: yes
+          state: started
+        tags:
+           - iptables
+
+#OPENING PORTS
+- name: Changing firewalld to iptables
+  hosts: all
+  gather_facts: False
+  tasks:
+    - name: Open the correct Iptables ports
+      lineinfile: 
+        dest: /etc/sysconfig/iptables
+        line: "-A INPUT -p {{item.protocol}} -m state --state NEW -m {{item.protocol}} --dport {{item.port}} -j ACCEPT"
+        insertbefore: "^-A INPUT -j REJECT --reject-with icmp-host-prohibited$" 
+      with_items:
+        - { protocol: tcp, port: 80 }
+        - { protocol: tcp, port: 443 }
+        - { protocol: tcp, port: 22 }
+      tags:
+        - open-ports
+        - iptables
+
+    - name: Restarting IPTables service
+      service:
+        name: iptables
+        state: restarted
+      tags:
+        - open-ports
+        - iptables
+
+#INSTALLING TOWER
+- name: Installing Software
+  hosts: all
+  vars_files:
+      - settings/authentications
+      - settings/defaults
+      - settings/mail_authentication
+  gather_facts: False
+  tasks:
+      - name: Downloading Tower Installer
+        get_url:
+          url: https://releases.ansible.com/ansible-tower/setup/ansible-tower-setup-latest.tar.gz
+          dest: /tmp/ansible-tower-setup-latest.tar.gz
+        tags:
+          - download_software
+
+      - name: Creating installation directory
+        file:
+          path: /tmp/ansible-tower-setup-latest
+          state: directory
+        tags:
+          - installing_software
+
+      - name: Extracting Tower
+        unarchive:
+          src: "/tmp/ansible-tower-setup-latest.tar.gz"
+          dest: "/tmp/ansible-tower-setup-latest"
+          remote_src: yes
+        tags:
+          - installing_software
+
+      - name: Uploading inventory file for install
+        template:
+          src: ./templates/inventory.j2
+          dest: /tmp/ansible-tower-setup-latest/ansible-tower-setup-{{ tower_version }}/inventory
+        tags:
+          - installing_software
+          - install_features
+
+      - name: Running setup
+        shell: /tmp/ansible-tower-setup-latest/ansible-tower-setup-{{ tower_version }}/setup.sh >> setup.log
+        tags:
+          - installing_software
+
+      - name: Installing license file
+        copy: 
+          src: "{{ tower_key }}"
+          dest: "/etc/tower/license"
+        tags:
+          - installing_software
+          - register_key

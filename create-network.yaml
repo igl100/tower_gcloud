@@ -1,0 +1,46 @@
+---
+- name: Creating all the necessary Networking for Tower
+  hosts: localhost
+  connection: local
+  gather_facts: False
+  vars_files:
+     - settings/authentications
+     - settings/defaults
+  vars:
+     tower_firewall_rules:
+         - { name: "enable-ssh", allow: "tcp:22",          range: "0.0.0.0/0", tag: "enable-ssh" }
+         - { name: "ports",     allow: "tcp:8443,9090,80,443",   range: "0.0.0.0/0", tag: "ansible-tower" }
+  tasks:
+    - include: ./commons.yaml
+      tags:
+         - always
+
+    - name: Creating Network{{ ':' }} {{ network_name }} and Subnetwork{{ ':' }} {{ subnetwork_name }}
+      gce_net:
+        name: "{{ network_name }}"
+        mode: custom
+        subnet_name: "{{ subnetwork_name }}"
+        subnet_region: "{{ region }}"
+        ipv4_range: "{{ subnetwork_range }}"
+        state: present
+        project_id: "{{ gce_project_id }}"
+        credentials_file: "{{ gce_credentials_file }}"
+        service_account_email: "{{ gce_service_account_email }}"
+      tags:
+         - create_network
+
+    - name: Create firewall rules for network{{ ':' }} {{ network_name }}
+      gce_net:
+        name: "{{ network_name }}"
+        fwname: "{{ network_name }}-{{ item.name }}"
+        allowed: "{{ item.allow }}"
+        src_range: "{{ item.range }}"
+        target_tags: "{{ item.tag }}"
+        state: present
+        project_id: "{{ gce_project_id }}"
+        credentials_file: "{{ gce_credentials_file }}"
+        service_account_email: "{{ gce_service_account_email }}"
+      with_items: "{{ tower_firewall_rules }}"
+      tags:
+         - create_network
+         - create_network_firewall_rules

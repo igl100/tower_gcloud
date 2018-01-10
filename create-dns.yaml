@@ -1,0 +1,29 @@
+# CREATING DNS ZONE
+- name: Create a basic zone with the minimum number of parameters.
+  gcdns_zone: 
+    zone: "{{tower_dns_zone}}"
+    service_account_email: "{{ gce_service_account_email }}"
+    credentials_file: "{{ gce_credentials_file }}"
+    project_id: "{{ gce_project_id }}"
+  ignore_errors: true
+  tags:
+    - create_dns
+
+### "CREATE DNS CONFIG
+- name: Retriving Tower node
+  set_fact: tower_node={{ groups[['tower_group'][0]] }}
+  tags:
+    - create_dns
+
+- name: Creating Tower DNS config
+  gcdns_record:
+    service_account_email: "{{ gce_service_account_email }}"
+    credentials_file: "{{ gce_credentials_file }}"
+    project_id: "{{ gce_project_id }}"
+    record: '*.{{tower_subdomain}}'
+    zone: '{{tower_dns_zone}}'
+    type: A
+    overwrite: true
+    value: '{{ tower_node }}'
+  tags:
+    - create_dns

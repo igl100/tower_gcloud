@@ -1,0 +1,50 @@
+### Create infra nodes
+
+- name: Creating instance {{ ':' }} {{ tower_host }}
+  gce:
+    instance_names: "{{ tower_host }}"
+    state: "present"
+    machine_type: "{{ default_machine_type }}"
+    image: "{{ image }}"
+    zone: "{{ zone }}"
+    network: "{{ network_name }}"
+    subnetwork: "{{ subnetwork_name }}"
+    tags: ["enable-ssh","ansible-tower"]
+    disk_auto_delete: True
+    project_id: "{{ gce_project_id }}"
+    credentials_file: "{{ gce_credentials_file }}"
+    service_account_email: "{{ gce_service_account_email }}"
+  ignore_errors: True
+  register: tower_creation
+  tags:
+     - create_tower
+
+- debug: var=tower_creation
+  tags:
+     - create_tower
+
+- name: Getting Tower's Public IP{{ ':' }} {{ tower_creation.instance_data[0].public_ip }}
+  set_fact: tower_public_ip={{ tower_creation.instance_data[0].public_ip }}
+  tags:
+     - create_tower
+
+- name: Getting Tower's Private IP{{ ':' }} {{ tower_creation.instance_data[0].private_ip }}
+  set_fact: tower_private_ip={{ tower_creation.instance_data[0].private_ip }}
+  tags:
+     - create_tower
+
+- name: Wait for Tower's instance to be up{{ ':' }} {{ tower_public_ip }}
+  wait_for: host="{{ tower_public_ip }}" port={{ ssh_default_image_port }} delay={{ instance_validate_delay }}  state=started
+  tags:
+     - create_tower
+
+#"
+- name: Adding Tower into group{{ ':' }} tower_hosts
+  add_host: groups=tower_group hostname={{ tower_public_ip }} 
+            private_ip={{ tower_private_ip}} instance_name={{ tower_host }}
+            public_ip={{ tower_public_ip }}
+            ansible_user={{ ssh_default_image_user }} ansible_password={{ ssh_default_image_password }}
+            ansible_port={{ ssh_default_image_port }}
+  tags:
+     - create_tower
+

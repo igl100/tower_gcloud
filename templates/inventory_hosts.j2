@@ -1,0 +1,9 @@
+[all]
+{% for item in groups['all'] %}
+{{ item }}
+{% endfor %}
+
+[tower_group]
+{% for entry in groups['tower_group'] %}
+{{ entry }} hostname={{ entry }} instance_name={{ hostvars[entry]['instance_name'] }} public_ip={{ hostvars[entry]['public_ip'] }} private_ip={{ hostvars[entry]['private_ip'] }} ansible_user={{ ssh_default_image_user }} ansible_password={{ ssh_default_image_password }} ansible_port={{ ssh_default_image_port }}
+{% endfor %}
